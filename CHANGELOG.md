@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-18
+
 ### Added
 
 - ÖkoFEN pellet boilers (Pellematic) and heat pumps through their local JSON
@@ -55,4 +57,5 @@ the notes of the version's GitHub Release.
 - While a refused password stops the reads, two reads are never closer than
   the refresh interval.
 
-[Unreleased]: https://github.com/LM1LC3N7/gladys-oekofen/commits/main
+[Unreleased]: https://github.com/LM1LC3N7/gladys-oekofen/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/LM1LC3N7/gladys-oekofen/releases/tag/v0.1.1
