@@ -1,67 +1,127 @@
-# Template de démonstration
+# ÖkoFEN
 
-Ceci est la documentation utilisateur de l'intégration. Gladys ré-héberge ce
-fichier et affiche un lien **Documentation** permanent vers lui dans l'écran
-de configuration (dans la langue de l'utilisateur, avec l'anglais en repli) —
-c'est au moment de configurer que l'utilisateur en a le plus besoin. Gardez
-les courtes indications d'accueil dans les blocs `section` du `config_schema`
-du manifest ; mettez ici le pas-à-pas détaillé (captures d'écran, dépannage…).
+Intégration non officielle, sans lien avec ÖkoFEN. Elle amène dans Gladys une
+chaudière à granulés **ÖkoFEN** (Pellematic, Pellematic Compact, Smart…) ou
+une pompe à chaleur ÖkoFEN, par l'**interface JSON locale** de son écran
+Touch, **en lecture seule**.
+
+> **Attention : jamais testé avec une vraie chaudière.** Cette intégration a
+> été écrite à partir de l'intégration Home Assistant oekofen-pellematic-compact
+> et testée contre une fausse chaudière seulement. Les retours sont les
+> bienvenus.
 
 ## Ce que vous obtenez
 
-Six appareils de démonstration apparaissent après l'installation : une
-station météo (vraies données Open-Meteo), un interrupteur, une lampe
-variable, une prise connectée avec mesure de puissance, un détecteur de
-mouvement et une caméra.
+Un appareil Gladys par composant que la chaudière annonce :
 
-## Configuration
+| Appareil                | Fonctionnalités                                                                                                                                                                                                                                    |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Installation ÖkoFEN     | Température extérieure, mode de l'installation, alarme (0/1), alarmes actives, dernier message.                                                                                                                                                    |
+| Chaudière ÖkoFEN 1      | État (texte de la chaudière), défaut (0/1), température chaudière et consigne, température foyer, modulation (%), puissance estimée (kW), stock de granulés, trémie, granulés du jour et de la veille (kg), démarrages et heures du brûleur, mode. |
+| Circuit de chauffage 1… | Température de départ et consigne, température ambiante et consigne (si le circuit a une sonde), circulateur (0/1), mode (Arrêt, Auto, Confort, Réduit), état.                                                                                     |
+| Eau chaude 1…           | Température de l'eau (haut et bas), consigne, circulateur, mode (Arrêt, Auto, Marche forcée), état.                                                                                                                                                |
+| Ballon tampon 1…        | Températures haut et milieu, consigne haut, circulateur (%), état.                                                                                                                                                                                 |
+| Capteur solaire 1…      | Température capteur et stockage, circulateur (%), mode, état (s'il est présent).                                                                                                                                                                   |
+| Compteur solaire 1…     | Températures départ et retour, puissance (kW), production du jour et totale (kWh) (s'il est présent).                                                                                                                                              |
+| Pompe à chaleur 1…      | Températures départ, consigne, retour, source entrée et sortie, COP, mode, état (s'il est présent).                                                                                                                                                |
 
-1. Ouvrez l'onglet **Configuration** de l'intégration.
-2. Renseignez la **latitude** et la **longitude** que la station météo de
-   démonstration doit observer (Paris par défaut), et choisissez votre unité
-   de température. L'**intervalle de rafraîchissement** règle la fréquence
-   de lecture de la station météo et de la puissance de la prise : toutes
-   les 5 minutes par défaut, toutes les minutes au plus.
-3. Enregistrez : les appareils apparaissent dans l'onglet **Découverte**,
-   prêts à être ajoutés.
+Chaque fonctionnalité n'apparaît que si la chaudière envoie la valeur. Les
+températures sont des sondes (elles n'entrent pas dans la moyenne de la
+pièce). Les kg, kW, kWh et % n'ont pas d'unité dans Gladys (le cœur ne les
+propose pas pour ces catégories) : l'unité est dans le nom. La puissance
+estimée vaut la puissance nominale × la modulation, seulement si la chaudière
+donne sa puissance nominale (souvent avec le fichier `json.properties`).
+L'énergie solaire n'est **pas** envoyée au tableau de bord énergie de Gladys
+(il la compterait comme de l'électricité).
 
-Le réglage **Préférer la connexion locale** pilote la prise de
-démonstration : elle affiche en badge le canal réellement utilisé (local ou
-cloud), avec un point orange quand elle fonctionne en mode dégradé (local
-refusé, bascule cloud).
+Déclencheur de scène **Alarme de la chaudière ÖkoFEN** : quand une lecture
+montre un nouveau message de la chaudière, une chaudière nouvellement en
+défaut, ou plus d'erreurs que la lecture précédente. Variables : `message` et
+`code` (vide s'il est inconnu). Jamais à la première lecture après un
+démarrage.
 
-## Actions
+Le badge de chaque appareil affiche « local », ou « injoignable » quand la
+chaudière ne répond pas ou refuse le mot de passe (avec un point orange si ce
+composant manque dans la dernière réponse).
 
-- **Tester le fournisseur météo** — effectue une requête en direct vers
-  Open-Meteo et affiche la température et l'humidité actuelles sous le
-  bouton.
-- **Identifier un appareil** — choisissez un de vos appareils dans la liste
-  et il se signale (la lampe de démonstration « clignote » dans les logs).
+## Installation
 
-## Scènes
+1. Sur l'écran Touch de la chaudière : **Réglages généraux → Réglages réseau
+   (IP Config)**, descendez et **activez l'interface JSON**. N'activez pas le
+   mode de compatibilité. L'écran affiche une URL de la forme
+   `http://<ip>:<port>/<mot de passe>/all`.
+2. Dans Gladys, installez l'intégration ÖkoFEN et saisissez séparément
+   l'**adresse IP**, le **port** (4321 par défaut) et le **mot de passe** de
+   cette URL. Ne collez pas l'URL entière dans le champ adresse : elle
+   contient le mot de passe (l'intégration la refuse).
+3. Enregistrez, puis ajoutez les appareils depuis l'onglet **Découverte**.
 
-L'intégration ajoute ses propres cartes à l'éditeur de scènes (Gladys 5.1
-ou plus récent), dans la catégorie **Intégrations** :
+Donnez une adresse IP fixe à la chaudière (bail DHCP réservé) : l'adresse
+n'entre pas dans les identifiants des appareils, mais elle doit rester
+joignable.
 
-- **Mouvement détecté** (déclencheur) — lance la scène quand un détecteur
-  de démonstration voit bouger quelque chose. Choisissez éventuellement le
-  détecteur et ce qui a bougé (personne, animal) ; laissés vides, toute
-  détection correspond. Les actions suivantes peuvent lire ce qui a bougé
-  avec `{{triggerEvent.data.target}}`.
-- **Identifier un appareil** (action) — fait se signaler l'appareil choisi.
-  Elle indique si l'appareil a pu se signaler, pour que les actions
-  suivantes puissent en dépendre.
+## Lecture seule
 
-## Tableau de bord
+Cette première version **ne commande rien** : ni allumage, ni extinction, ni
+changement de mode, ni consigne. Une chaudière est un appareil à flamme, et
+l'interface JSON n'est protégée que par un mot de passe court envoyé en clair
+sur le réseau local : la v1 lit seulement. Toutes les fonctionnalités sont en
+lecture seule ; une commande venue de Gladys (scène, tableau de bord,
+assistant vocal) est refusée sans rien envoyer.
 
-Ajoutez le widget **État de la démo** à un tableau de bord : il affiche en
-direct la température de la station météo et la puissance de la prise du
-bureau, la connexion utilisée par la prise (en orange si dégradée) et la
-position observée. Son bouton **Identifier la lampe** fait se signaler la
-lampe de démonstration.
+## Mot de passe et vie privée
 
-## Dépannage
+- Le mot de passe est **gardé par Gladys dans sa base, jamais réaffiché, et
+  envoyé seulement à la chaudière**, dans l'URL de chaque lecture : c'est le
+  format de l'appareil. Cette URL n'apparaît jamais dans les journaux ni dans
+  les messages d'état.
+- Le volume `/data` de l'intégration garde seulement une pause demandée par la
+  chaudière et un arrêt sur mot de passe refusé, avec une empreinte de
+  l'adresse et du port. Ni le mot de passe, ni son empreinte.
+- Tout reste sur votre réseau local, en HTTP (la chaudière ne propose pas
+  HTTPS) : quiconque écoute ce réseau peut lire le mot de passe, comme avec
+  l'application.
 
-L'intégration journalise tout ce qu'elle fait : consultez les logs de
-l'intégration depuis l'interface Gladys (ou `docker logs` sur l'hôte) avec
-`LOG_LEVEL=debug` pour le détail complet.
+## Rafraîchissement
+
+La chaudière répond lentement et refuse les lectures trop rapprochées : elle
+est lue **toutes les 60 secondes** par défaut (60 à 3600), une seule requête
+à la fois, jamais deux à moins de 3 secondes, le bouton **Tester la
+connexion** et la Découverte compris (30 secondes au moins entre deux
+lectures demandées à la main).
+
+Le micrologiciel est détecté seul (`all?`, puis `all??` pour certains anciens
+modèles) ; le champ **Micrologiciel** force l'un ou l'autre. Les réponses en
+UTF-8, en Latin-1 (ISO-8859-1) ou mélangées sont lues.
+
+## Erreurs
+
+- **Mot de passe refusé** (ou interface JSON désactivée) : les lectures
+  s'arrêtent ; un nouvel essai après 10 min, 1 h, puis toutes les 6 h, ou
+  aussitôt quand vous changez l'adresse ou le mot de passe ou cliquez sur
+  **Tester la connexion**. L'arrêt est gardé aux redémarrages.
+- **La chaudière demande d'attendre** (401 « Wait at least 2500ms ») ou ne
+  répond pas : nouvel essai après 1, 2, 5, 10 puis toutes les 15 minutes,
+  jamais plus vite que l'intervalle.
+- **HTTP 429** : une pause d'au moins 1 minute (Retry-After s'il est donné,
+  6 h au plus), pour tous les chemins, gardée aux redémarrages.
+- Une réponse trop grande (plus de 256 Ko) ou qui n'est pas du JSON est
+  refusée.
+
+## Limites
+
+- Jamais testé avec une vraie chaudière : les noms des champs viennent de
+  l'intégration de référence et de ses réponses d'exemple.
+- Les textes d'état sont ceux de la chaudière, dans la langue de son écran.
+- L'heure des messages est celle de la chaudière, sans fuseau.
+- Pas de commande (voir le fichier TODO du dépôt pour une v2).
+
+## Crédits
+
+- [oekofen-pellematic-compact](https://github.com/dominikamann/oekofen-pellematic-compact)
+  de Dominik Amann (Apache-2.0) : l'interface JSON, l'encodage, la lecture
+  des valeurs et des messages sont portés en JavaScript.
+- Voir `THIRD_PARTY_NOTICES.md`.
+
+ÖkoFEN et Pellematic sont des marques d'ÖkoFEN ; ce projet est sans lien avec
+ÖkoFEN.

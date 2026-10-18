@@ -1,0 +1,42 @@
+{
+  "system": ["outdoor-temperature", "mode", "alarm", "alarm-count", "last-message"],
+  "pe": [
+    "status",
+    "fault",
+    "boiler-temperature",
+    "boiler-setpoint",
+    "combustion-temperature",
+    "modulation",
+    "power",
+    "pellet-stock",
+    "hopper-level",
+    "pellets-today",
+    "pellets-yesterday",
+    "burner-starts",
+    "burner-hours",
+    "mode"
+  ],
+  "hk": [
+    "status",
+    "flow-temperature",
+    "flow-setpoint",
+    "room-temperature",
+    "room-setpoint",
+    "pump",
+    "mode"
+  ],
+  "ww": ["status", "temperature", "temperature-bottom", "setpoint", "pump", "mode"],
+  "pu": ["status", "top-temperature", "middle-temperature", "top-setpoint", "pump"],
+  "sk": ["status", "collector-temperature", "store-temperature", "pump", "mode"],
+  "se": ["flow-temperature", "return-temperature", "power", "energy-today", "energy-total"],
+  "wp": [
+    "status",
+    "flow-temperature",
+    "flow-setpoint",
+    "return-temperature",
+    "source-in-temperature",
+    "source-out-temperature",
+    "cop",
+    "mode"
+  ]
+}
