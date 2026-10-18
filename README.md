@@ -50,7 +50,7 @@ Gladys ⇄ SDK ⇄ src/handlers.js ⇄ src/app.js (OekofenApp) ⇄ src/client.js
 - **Alarms**: `system/alarm` (1 when `L_errors` > 0, a message is listed, or
   a boiler is in fault, state 11), `alarm-count`, `last-message`; the scene
   trigger `boiler_alarm` (`message`, `code`) as the reference's MessageLog:
-  the keys of the messages seen (time|code, else the text) and the boilers in
+  the keys of the messages seen (time|code|component, else the text) and the boilers in
   fault are kept in `/data` (200 keys); a key never seen fires whatever the
   gap since the previous read, a message coming back never fires again, the
   very first read without memory only learns. A higher error count without a

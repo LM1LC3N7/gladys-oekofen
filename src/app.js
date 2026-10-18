@@ -321,7 +321,9 @@ export class OekofenApp {
     const interval = this.config.pollInterval * 1000;
     let delay;
     if (this.blocked) {
-      delay = Math.max(this.retryAt, this.pausedUntil) - now;
+      // Never closer than one interval to the last attempt, whatever ended it
+      // (a failed `??` try goes back to `?` without a pause of its own).
+      delay = Math.max(this.retryAt, this.pausedUntil, this.client.lastRequestAt + interval) - now;
     } else if (now < this.pausedUntil) {
       // Never read again faster than the interval, a pause included.
       delay = Math.max(this.pausedUntil - now, interval);
@@ -539,7 +541,12 @@ export class OekofenApp {
           ? undefined
           : { text: messageText(messages[0], this.config.language) },
     };
-    this.alarmEvents({ messages: messages ?? [], faults, count });
+    this.alarmEvents({
+      messages: messages ?? [],
+      listed: messages !== undefined,
+      faults,
+      count,
+    });
 
     this.components.clear();
     if (systemSection !== undefined || known) {
@@ -559,16 +566,29 @@ export class OekofenApp {
    * whatever the time since the previous read (a failed or slow read never
    * hides it), and a message that comes back never fires again; a boiler
    * fires when it enters a fault. The very first read without memory only
-   * learns. A higher error count without a new message (and not explained by
-   * messages listed again) fires only between two consecutive successful
-   * reads at most two intervals apart.
+   * learns. A higher error count without a new message fires only between
+   * two consecutive successful reads at most two intervals apart, when the
+   * rise is more than the known messages that came back in this read.
    */
-  alarmEvents({ messages, faults, count }) {
+  alarmEvents({ messages, listed, faults, count }) {
     const now = this.now();
     const language = this.config.language;
+    // Identical keys in one read get a rank (`#2`…): two messages, two alarms.
+    const ranks = new Map();
+    const keys = messages.map((message) => {
+      const key = messageKey(message);
+      const rank = (ranks.get(key) ?? 0) + 1;
+      ranks.set(key, rank);
+      return rank === 1 ? key : `${key}#${rank}`;
+    });
     const previousCount = this.lastCount;
-    this.lastCount = { at: now, count, listed: messages.length };
-    const keys = messages.map(messageKey);
+    // `keys` undefined: this read had no error section.
+    this.lastCount = { at: now, count, keys: listed ? new Set(keys) : undefined };
+    // Messages that came back: seen before, absent from the previous read
+    // (nothing is subtracted when the previous read had no error section).
+    const returned = previousCount?.keys
+      ? keys.filter((k) => this.alarmSeen?.seen.includes(k) && !previousCount.keys.has(k)).length
+      : 0;
     const faulted = new Set();
     for (const { component, fault } of faults) {
       // An unknown state keeps what was known.
@@ -613,8 +633,9 @@ export class OekofenApp {
       count !== undefined &&
       previousCount?.count !== undefined &&
       now - previousCount.at <= maxGap &&
-      // Not explained by messages listed again (a known message coming back).
-      count - previousCount.count > messages.length - previousCount.listed
+      count - previousCount.count > 0 &&
+      // Not explained by known messages coming back in this read.
+      count - previousCount.count > returned
     ) {
       events.push({ message: word(MESSAGES.countRose(count), language), code: '' });
     }

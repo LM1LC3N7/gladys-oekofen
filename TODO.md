@@ -27,6 +27,10 @@ up to date at the end of every milestone.
       during a backoff, backoff persisted, a failed `??` probe never blocks,
       the stop lifted only by a successful read, messages sorted before the
       cut, message key time|code, texts, port headers, audit fix.
+- [x] **Approval round 1 fixes** (2026-10-18, on 5f6080f): error-count rule
+      (rise > 0 and more than the messages that came back), one interval
+      after any attempt during a stop, message key with the component prefix
+      and a rank.
 - [ ] **Milestone 2 — real boiler**: run against a real Pellematic (and a
       heat pump if one can be found), compare with the Touch display (see
       "To check"); turn the answers (anonymized, password removed) into
@@ -187,15 +191,24 @@ is the safe order.
   `last-message` = the newest `error_N` (by its time; the messages are sorted
   by time then key number before the cut to 10). Scene events as the
   reference's MessageLog (diagnosis.py, review I1): the message keys seen
-  (time|code when both are known, else time|code|text) and the boilers in
+  (time|code|component prefix "PE1", "HK2"… when time and code are known,
+  else time|code|text; identical keys in one read get a rank `#2`, approval
+  round 1: two boilers with the same code at the same time give two alarms)
+  and the boilers in
   fault are kept in `/data` (200 keys at most, per boiler); a key never seen
   fires whatever the gap since the previous read; a message that comes back
   never fires again; a boiler fires when it enters a fault (an unknown state
   keeps the known one); the very first read without memory only learns. The
   error count fires only between two consecutive successful reads at most
-  two intervals (plus the read timeout) apart, without a new message, and
-  when the rise is not explained by messages listed again. 5 per read at
-  most.
+  two intervals (plus the read timeout) apart, without a new message, when
+  the rise (count - previous count, > 0) is more than the messages that came
+  back (keys of this read already seen but absent from the previous read;
+  nothing subtracted when the previous read had no error section; approval
+  round 1). 5 per read at most.
+- **Spacing during a stop** (approval round 1): while a refused password
+  stops the reads, the next read is never closer than one interval to the
+  last attempt, whatever ended it (a failed `??` try goes back to `?`
+  without a pause of its own).
 - **Logs**: never the password, the URL nor the address; `errorReason` never
   prints an unknown error's message.
 - **Template demo files removed** (devices, scenes, widgets, weather and

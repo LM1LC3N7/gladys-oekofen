@@ -250,7 +250,7 @@ test('alarms: a slow read after a failed one still fires; a message that comes b
   const server = fakeBoiler({ document: modern({ errors: 1, messages: { error_1: A } }) });
   const store = memoryStore();
   const { gladys, app, advance } = await setup(t, { server, store });
-  assert.deepEqual(store.data.alarms.seen, ['2026-10-01 07:00:00|1']);
+  assert.deepEqual(store.data.alarms.seen, ['2026-10-01 07:00:00|1|']);
   // One failed read, then a slow answer (8 s) with a new message: more than
   // two intervals after the last success, it still fires.
   server.failNetwork();
@@ -482,4 +482,93 @@ test('the language of the names follows the configuration', async (t) => {
     'Chaudière ÖkoFEN 1',
   );
   assert.ok(HOUR > 0);
+});
+
+const A = '01-10-2026 07:00:00|PE 1 Old message [1]';
+const B = '18-10-2026 09:59:00|PE 1 Pellets Warnung [5054]';
+const B2 = '18-10-2026 09:59:00|PE 2 Pellets Warnung [5054]';
+
+test('error count: a shorter list with a stable count, or no error section, fires nothing', async (t) => {
+  const server = fakeBoiler({
+    document: modern({ errors: 2, messages: { error_1: A, error_2: B } }),
+  });
+  const { gladys, advance } = await setup(t, { server });
+  server.document = modern({ errors: 2, messages: { error_1: A } });
+  await advance(MINUTE);
+  const noSection = modern({ errors: 2 });
+  delete noSection.error;
+  server.document = noSection;
+  await advance(MINUTE);
+  assert.equal(gladys.fake.sceneEvents.length, 0);
+});
+
+test('error count: a known message back with a new unlisted error fires once', async (t) => {
+  const server = fakeBoiler({
+    document: modern({ errors: 2, messages: { error_1: A, error_2: B } }),
+  });
+  const { gladys, advance } = await setup(t, { server });
+  server.document = modern({ errors: 1, messages: { error_1: B } });
+  await advance(MINUTE);
+  // A comes back (+1) and an unlisted error appears (+1): 1 -> 3.
+  server.document = modern({ errors: 3, messages: { error_1: A, error_2: B } });
+  await advance(MINUTE);
+  assert.deepEqual(
+    gladys.fake.sceneEvents.map((e) => e.data),
+    [{ message: '3 alarmes actives', code: '' }],
+  );
+  // A comes back alone: explained, nothing fires.
+  server.document = modern({ errors: 2, messages: { error_1: B } });
+  await advance(MINUTE);
+  server.document = modern({ errors: 3, messages: { error_1: A, error_2: B } });
+  await advance(MINUTE);
+  assert.equal(gladys.fake.sceneEvents.length, 1);
+});
+
+test('error count: after a read without error section, a rise fires (nothing subtracted)', async (t) => {
+  const server = fakeBoiler({ document: modern({ errors: 1, messages: { error_1: A } }) });
+  const { gladys, advance } = await setup(t, { server });
+  const noSection = modern({ errors: 1 });
+  delete noSection.error;
+  server.document = noSection;
+  await advance(MINUTE);
+  server.document = modern({ errors: 2, messages: { error_1: A } });
+  await advance(MINUTE);
+  assert.deepEqual(
+    gladys.fake.sceneEvents.map((e) => e.data),
+    [{ message: '2 alarmes actives', code: '' }],
+  );
+});
+
+test('two boilers with the same code at the same time: two alarms', async (t) => {
+  const server = fakeBoiler({ document: modern({ errors: 0, messages: {} }) });
+  const { gladys, advance } = await setup(t, { server });
+  server.document = modern({ errors: 2, messages: { error_1: B, error_2: B2 } });
+  await advance(MINUTE);
+  assert.equal(gladys.fake.sceneEvents.length, 2);
+});
+
+test('during a refused-password stop, a failed "??" try never brings a read closer than the interval', async (t) => {
+  const server = fakeBoiler({ password: 'other' });
+  const { app, advance } = await setup(t, { server });
+  assert.equal(app.blocked, true);
+  // The button, one interval later, meets a network error: "auto" tries "??" next.
+  await advance(MINUTE);
+  server.failNetwork();
+  await app.testConnection();
+  assert.equal(app.suffix, '??');
+  // The scheduled new try (10 min) on "??" is refused: back to "?", but the
+  // next read waits one interval after that attempt.
+  await advance(9 * MINUTE + 5 * SECOND);
+  assert.deepEqual(
+    server.requests.map((r) => r.suffix),
+    ['?', '?', '??'],
+  );
+  const tryAt = server.requests.at(-1).at;
+  await advance(50 * SECOND);
+  assert.equal(server.requests.length, 3, 'no read 5 s later, nor before the interval');
+  await advance(MINUTE);
+  for (let i = 1; i < server.requests.length; i += 1) {
+    assert.ok(server.requests[i].at - server.requests[i - 1].at >= MINUTE);
+  }
+  assert.ok(server.requests.at(-1).at - tryAt >= MINUTE);
 });

@@ -48,5 +48,11 @@ the notes of the version's GitHub Release.
 - A refused `??` probe (old firmware detection) no longer stops the reads as
   a refused password: the integration goes back to `?`.
 - The ten messages kept are the newest (sorted before the cut).
+- The "more errors" alarm no longer fires on a shorter list or a read
+  without error section, and no longer misses a rise that came with a known
+  message listed again.
+- Two boilers reporting the same code at the same time now give two alarms.
+- While a refused password stops the reads, two reads are never closer than
+  the refresh interval.
 
 [Unreleased]: https://github.com/LM1LC3N7/gladys-oekofen/commits/main

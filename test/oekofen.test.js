@@ -213,10 +213,18 @@ test('messages: time, text and code; newest first; bounded; linear on hostile in
     messagesOf(dated).map((m) => m.code),
     ['12', '11', '10', '9', '8', '7', '6', '5', '4', '3'],
   );
-  // The key: time and code when both are known, the text otherwise.
+  // The key: time, code and component when both are known, the text otherwise.
   assert.equal(
     messageKey({ time: '2026-10-18 09:59:00', code: '5054', text: 'x' }),
-    '2026-10-18 09:59:00|5054',
+    '2026-10-18 09:59:00|5054|',
+  );
+  assert.equal(
+    messageKey({ time: '2026-10-18 09:59:00', code: '5054', text: 'PE 1 Pellets Warnung' }),
+    '2026-10-18 09:59:00|5054|PE1',
+  );
+  assert.notEqual(
+    messageKey({ time: '2026-10-18 09:59:00', code: '5054', text: 'pe2 Pellets Warnung' }),
+    messageKey({ time: '2026-10-18 09:59:00', code: '5054', text: 'PE 1 Pellets Warnung' }),
   );
   assert.equal(messageKey({ time: undefined, code: undefined, text: 'Free' }), '||Free');
   const started = process.hrtime.bigint();

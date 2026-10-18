@@ -438,11 +438,17 @@ export function messagesOf(root) {
 }
 
 /**
- * A stable key of a message, to tell a new one: its time and code when it
- * has both (the text may change with the display language), its text
- * otherwise.
+ * A stable key of a message, to tell a new one: its time, code and component
+ * prefix when it has a time and a code (the rest of the text may change with
+ * the display language), its text otherwise.
  */
-export const messageKey = (message) =>
-  message.time && message.code
-    ? `${message.time}|${message.code}`
-    : `${message.time ?? ''}|${message.code ?? ''}|${message.text}`;
+export function messageKey(message) {
+  if (message.time && message.code) {
+    // The component the message is about ("PE 1", "HK2"…): two boilers can
+    // report the same code at the same time.
+    const component = /^(PE|HK|WW|PU|SK|SE|WP)\s*(\d{1,2})\b/i.exec(message.text ?? '');
+    const prefix = component ? `${component[1].toUpperCase()}${component[2]}` : '';
+    return `${message.time}|${message.code}|${prefix}`;
+  }
+  return `${message.time ?? ''}|${message.code ?? ''}|${message.text}`;
+}
