@@ -4,6 +4,9 @@
 // at a time, never two closer than 3 s (the boiler refuses reads closer than
 // 2.5 s). The URL carries the password: it is built here only, and never
 // leaves this file (no log, no error message, no status).
+//
+// Ported in part from dominikamann/oekofen-pellematic-compact 4.4.0
+// (Apache-2.0), changed: see THIRD_PARTY_NOTICES.md.
 // -----------------------------------------------------------------------------
 
 import { isIP } from 'node:net';

@@ -11,6 +11,7 @@ import {
   decodeState,
   formatLabel,
   hasMetadata,
+  messageKey,
   messagesOf,
   parseBody,
   parseMessage,
@@ -189,6 +190,35 @@ test('messages: time, text and code; newest first; bounded; linear on hostile in
     error: Object.fromEntries(Array.from({ length: 50 }, (_, i) => [`error_${i}`, `m${i}`])),
   };
   assert.equal(messagesOf(flood).length, 10);
+  // Sorted by number before the cut: error_10 never passes before error_2.
+  const twelve = {
+    error: Object.fromEntries(
+      Array.from({ length: 12 }, (_, i) => [`error_${i + 1}`, `m${i + 1}`]),
+    ),
+  };
+  assert.deepEqual(
+    messagesOf(twelve).map((m) => m.text),
+    ['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7', 'm8', 'm9', 'm10'],
+  );
+  // The newest are kept when there are more than 10.
+  const dated = {
+    error: Object.fromEntries(
+      Array.from({ length: 12 }, (_, i) => [
+        `error_${i + 1}`,
+        `${String(i + 1).padStart(2, '0')}-10-2026 08:00:00|m${i + 1} [${i + 1}]`,
+      ]),
+    ),
+  };
+  assert.deepEqual(
+    messagesOf(dated).map((m) => m.code),
+    ['12', '11', '10', '9', '8', '7', '6', '5', '4', '3'],
+  );
+  // The key: time and code when both are known, the text otherwise.
+  assert.equal(
+    messageKey({ time: '2026-10-18 09:59:00', code: '5054', text: 'x' }),
+    '2026-10-18 09:59:00|5054',
+  );
+  assert.equal(messageKey({ time: undefined, code: undefined, text: 'Free' }), '||Free');
   const started = process.hrtime.bigint();
   parseMessage(`01-01-2026 00:00:00|${' '.repeat(4000)}[`);
   parseMessage(`01-01-2026 00:00:00|${'['.repeat(4000)}`);

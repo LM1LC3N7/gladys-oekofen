@@ -35,10 +35,12 @@ L'énergie solaire n'est **pas** envoyée au tableau de bord énergie de Gladys
 (il la compterait comme de l'électricité).
 
 Déclencheur de scène **Alarme de la chaudière ÖkoFEN** : quand une lecture
-montre un nouveau message de la chaudière, une chaudière nouvellement en
+montre un message de la chaudière jamais vu, une chaudière nouvellement en
 défaut, ou plus d'erreurs que la lecture précédente. Variables : `message` et
-`code` (vide s'il est inconnu). Jamais à la première lecture après un
-démarrage.
+`code` (vide s'il est inconnu). Les messages déjà vus sont gardés (200 au
+plus, dans `/data`) : un message qui revient ne redéclenche pas, et une
+lecture lente ou une lecture échouée ne fait pas manquer un nouveau message.
+Jamais à la toute première lecture (elle apprend les messages présents).
 
 Le badge de chaque appareil affiche « local », ou « injoignable » quand la
 chaudière ne répond pas ou refuse le mot de passe (avec un point orange si ce
@@ -75,9 +77,10 @@ assistant vocal) est refusée sans rien envoyer.
   envoyé seulement à la chaudière**, dans l'URL de chaque lecture : c'est le
   format de l'appareil. Cette URL n'apparaît jamais dans les journaux ni dans
   les messages d'état.
-- Le volume `/data` de l'intégration garde seulement une pause demandée par la
-  chaudière et un arrêt sur mot de passe refusé, avec une empreinte de
-  l'adresse et du port. Ni le mot de passe, ni son empreinte.
+- Le volume `/data` de l'intégration garde seulement la pause en cours (429
+  ou attente après des erreurs), un arrêt sur mot de passe refusé et les
+  messages d'alarme déjà vus, avec une empreinte de l'adresse et du port. Ni
+  le mot de passe, ni son empreinte.
 - Tout reste sur votre réseau local, en HTTP (la chaudière ne propose pas
   HTTPS) : quiconque écoute ce réseau peut lire le mot de passe, comme avec
   l'application.
@@ -86,9 +89,10 @@ assistant vocal) est refusée sans rien envoyer.
 
 La chaudière répond lentement et refuse les lectures trop rapprochées : elle
 est lue **toutes les 60 secondes** par défaut (60 à 3600), une seule requête
-à la fois, jamais deux à moins de 3 secondes, le bouton **Tester la
-connexion** et la Découverte compris (30 secondes au moins entre deux
-lectures demandées à la main).
+à la fois, jamais deux à moins de 3 secondes. Le bouton **Tester la
+connexion** et la Découverte ne lisent que si l'intervalle (30 secondes au
+moins) est écoulé depuis la dernière tentative, réussie ou non, et qu'aucune
+pause n'est en cours ; sinon le bouton affiche l'état et le temps restant.
 
 Le micrologiciel est détecté seul (`all?`, puis `all??` pour certains anciens
 modèles) ; le champ **Micrologiciel** force l'un ou l'autre. Les réponses en
@@ -98,11 +102,13 @@ UTF-8, en Latin-1 (ISO-8859-1) ou mélangées sont lues.
 
 - **Mot de passe refusé** (ou interface JSON désactivée) : les lectures
   s'arrêtent ; un nouvel essai après 10 min, 1 h, puis toutes les 6 h, ou
-  aussitôt quand vous changez l'adresse ou le mot de passe ou cliquez sur
-  **Tester la connexion**. L'arrêt est gardé aux redémarrages.
+  aussitôt quand vous changez l'adresse ou le mot de passe. **Tester la
+  connexion** réessaie aussi, une fois l'intervalle écoulé depuis la dernière
+  tentative. L'arrêt n'est levé que par une lecture réussie, et il est gardé
+  aux redémarrages.
 - **La chaudière demande d'attendre** (401 « Wait at least 2500ms ») ou ne
   répond pas : nouvel essai après 1, 2, 5, 10 puis toutes les 15 minutes,
-  jamais plus vite que l'intervalle.
+  jamais plus vite que l'intervalle. Cette attente est gardée aux redémarrages.
 - **HTTP 429** : une pause d'au moins 1 minute (Retry-After s'il est donné,
   6 h au plus), pour tous les chemins, gardée aux redémarrages.
 - Une réponse trop grande (plus de 256 Ko) ou qui n'est pas du JSON est

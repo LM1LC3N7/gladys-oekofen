@@ -49,16 +49,26 @@ Gladys ⇄ SDK ⇄ src/handlers.js ⇄ src/app.js (OekofenApp) ⇄ src/client.js
   `test/fixtures/roles.json`.
 - **Alarms**: `system/alarm` (1 when `L_errors` > 0, a message is listed, or
   a boiler is in fault, state 11), `alarm-count`, `last-message`; the scene
-  trigger `boiler_alarm` (`message`, `code`) on a new message, a boiler newly
-  in fault, or a higher error count, between two reads at most two intervals
-  apart; never on the first read; 5 events per read at most.
+  trigger `boiler_alarm` (`message`, `code`) as the reference's MessageLog:
+  the keys of the messages seen (time|code, else the text) and the boilers in
+  fault are kept in `/data` (200 keys); a key never seen fires whatever the
+  gap since the previous read, a message coming back never fires again, the
+  very first read without memory only learns. A higher error count without a
+  new message fires only between two consecutive reads at most two intervals
+  apart. 5 events per read at most.
 - **Errors**: 401/403/404 (but "Wait at least") = refused password: a stop,
-  new try after 10 min, 1 h, then every 6 h; 429: a pause of Retry-After
-  between 60 s and 6 h for every path; both kept in `/data` (0600, with a
-  hash of the address and port, never the password) and capped when read
-  back. Others: 1, 2, 5, 10, 15 min, never under the interval. A reconnection
-  to Gladys resends the status, the Discovery list and the badges, and keeps
-  the pause, the stop and the client.
+  new try after 10 min, 1 h, then every 6 h, lifted only by a successful
+  read; 429: a pause of Retry-After between 60 s and 6 h for every path;
+  others ("Wait at least", network, 5xx, bad JSON): a backoff of 1, 2, 5, 10,
+  15 min, never under the interval. The stop and the pause (429 or backoff,
+  with the failure count) are kept in `/data` (0600, with a hash of the
+  address and port, never the password), capped when read back; after a
+  restart the first read waits for the end of the pause. The test button and
+  Discovery read only when max(30 s, interval) has passed since the last
+  attempt and no pause holds; the button retries a refused password at once
+  only then. A failed `??` probe goes back to `?` without any stop. A
+  reconnection to Gladys resends the status, the Discovery list and the
+  badges, and keeps the pause, the stop and the client.
 - **Read only**: `onSetValue` refuses every command; no switch, no
   thermostat, no writable feature, no scene action.
 

@@ -1,13 +1,16 @@
 // -----------------------------------------------------------------------------
 // What must survive a restart, in /data (the only writable place of the
-// container): a 429 pause and a stop on a refused password, with the boiler
-// they belong to (a hash of its address and port), bounded when read back.
+// container), with the boiler it belongs to (a hash of its address and port),
+// bounded when read back: a pause (429, or the backoff after failures and
+// "Wait at least"), a stop on a refused password, and the alarms already seen
+// (message keys, boilers in fault: 200 at most), so a restart or a gap never
+// fires an old alarm again nor misses a new one.
 // Never the password, nor a hash of it (a short password is easy to find back
 // from its hash). The file is readable by the container user only (0600).
 // -----------------------------------------------------------------------------
 
 import { open, readFile, rename } from 'node:fs/promises';
-import { TIMINGS } from './constants.js';
+import { LIMITS, POLL_INTERVAL, TIMINGS } from './constants.js';
 
 export const STATE_FILE = '/data/oekofen-state.json';
 
@@ -41,6 +44,9 @@ export function fileStore(path = STATE_FILE) {
   };
 }
 
+/** The longest backoff: 15 min, or the interval when it is longer (1 h at most). */
+const BACKOFF_MAX = Math.max(TIMINGS.backoff.at(-1), POLL_INTERVAL.max * 1000);
+
 const time = (value) => (Number.isFinite(value) && value > 0 ? value : undefined);
 
 /**
@@ -49,9 +55,27 @@ const time = (value) => (Number.isFinite(value) && value > 0 ? value : undefined
  */
 export function normalizeMemory(raw, now = Date.now()) {
   const key = typeof raw?.key === 'string' && /^[0-9a-f]{32}$/.test(raw.key) ? raw.key : '';
+  const p = raw?.pause;
+  const kind = p?.kind === 'backoff' ? 'backoff' : 'rate';
   const pause =
-    key && time(raw?.pause?.until)
-      ? { until: Math.min(raw.pause.until, now + TIMINGS.rateLimitMax) }
+    key && time(p?.until)
+      ? {
+          kind,
+          until: Math.min(p.until, now + (kind === 'rate' ? TIMINGS.rateLimitMax : BACKOFF_MAX)),
+          failures: Number.isInteger(p.failures) && p.failures >= 0 ? Math.min(p.failures, 10) : 0,
+        }
+      : null;
+  const a = raw?.alarms;
+  const alarms =
+    key && a && typeof a === 'object' && Array.isArray(a.seen)
+      ? {
+          seen: a.seen
+            .filter((k) => typeof k === 'string' && k.length <= 512)
+            .slice(-LIMITS.seenAlarms),
+          faulted: Array.isArray(a.faulted)
+            ? a.faulted.filter((id) => typeof id === 'string' && /^pe[1-9][0-9]?$/.test(id))
+            : [],
+        }
       : null;
   const b = raw?.block;
   const block =
@@ -61,5 +85,5 @@ export function normalizeMemory(raw, now = Date.now()) {
           retryAt: Math.min(time(b.retryAt) ?? now, now + TIMINGS.refusedRetry.at(-1)),
         }
       : null;
-  return { key, pause, block };
+  return { key, pause, block, alarms };
 }

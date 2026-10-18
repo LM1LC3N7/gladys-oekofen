@@ -21,6 +21,12 @@ up to date at the end of every milestone.
       scene trigger, careful reads (60 s, 3 s gap, backoff, refused password
       stop, 429 pause, both in `/data`), badges, test button, en/fr, docs,
       cover. Tested against a fake JSON interface only (Node 22 and 24).
+- [x] **Review fixes** (2026-10-18, review of 782e5ad): alarms kept in
+      `/data` as the reference's MessageLog (no gap rule on messages), manual
+      reads spaced by max(30 s, interval) from the last attempt and never
+      during a backoff, backoff persisted, a failed `??` probe never blocks,
+      the stop lifted only by a successful read, messages sorted before the
+      cut, message key time|code, texts, port headers, audit fix.
 - [ ] **Milestone 2 — real boiler**: run against a real Pellematic (and a
       heat pump if one can be found), compare with the Touch display (see
       "To check"); turn the answers (anonymized, password removed) into
@@ -69,6 +75,9 @@ is the safe order.
 
 - The answer to a wrong password (401? 403? 404? an HTML page?), and to a
   disabled JSON interface; the exact body of the "Wait at least 2500ms" 401.
+- The password is sent %-encoded in the path (`encodeURIComponent`): check
+  that the boiler accepts it for passwords with special characters (the
+  reference puts the URL as typed).
 - How long a read takes (the reference waits 10 s; 15 s here), whether a
   read every 60 s is fine for weeks (the reference defaults to 30 s).
 - The charset of the answer on French firmware (Latin-1 expected).
@@ -108,18 +117,26 @@ is the safe order.
 - **Careful reads**: 60 s by default and at least (the reference defaults to
   30 s and only needs 2.5 s between requests; the brief asks 60 s). One
   request at a time, 3 s minimum gap for every path (polling, test button,
-  Discovery, the `??` probe); the test button and Discovery read at most
-  every 30 s; after an error never faster than the interval. No retry inside
+  Discovery, the `??` probe); the test button and Discovery read only when
+  max(30 s, interval) has passed since the last attempt (`client.lastRequestAt`,
+  failures included) and no pause holds (review I2); during a backoff the
+  button shows the status and the time left; after an error never faster
+  than the interval. No retry inside
   a cycle (the reference retries once after 3 s on an `IncompleteRead`: not
   ported, the next cycle reads again).
 - **Errors**: 401 "Wait at least" = `too_fast` (backoff); other 401, 403,
   404 = refused password (the password is a path segment): a stop with new
-  tries after 10 min, 1 h, then every 6 h, lifted at once by a new address
-  or password or the test button; 429 = pause of Retry-After between 60 s
-  and 6 h (5 min when absent) for every path; network, timeout, 5xx, bad
-  JSON: 1, 2, 5, 10, 15 min, never under the interval. Pause and stop are in
-  `/data`, capped when read back; a reconnection to Gladys keeps them.
-- **`/data` key without the password**: the stop and the pause are keyed by
+  tries after 10 min, 1 h, then every 6 h; a new address or password lifts
+  it at once; the test button retries at once, but only once the interval has
+  passed since the last attempt; the stop is lifted (also in `/data`) only by
+  a successful read (review M6); 429 = pause of Retry-After between 60 s and
+  6 h (5 min when absent) for every path; "Wait at least", network, timeout,
+  5xx, bad JSON: backoff 1, 2, 5, 10, 15 min, never under the interval. The
+  stop and the pause (`{ kind: 'rate' | 'backoff', until, failures }`) are in
+  `/data`, capped when read back (6 h for a 429, 1 h for a backoff); after a
+  restart the first read waits for the end of the pause (review I3); a
+  reconnection to Gladys keeps them.
+- **`/data` key without the password**: the stop, the pause and the alarms seen are keyed by
   a hash of address and port only (a 4-character password would be easy to
   find back from its hash). A restart after a password change made outside
   `onConfigUpdated` keeps the stop until its next try or the test button.
@@ -138,8 +155,11 @@ is the safe order.
 - **URL variant** (reference `_detect_api_config`): "auto" reads `?`; with
   metadata it is kept; without, `??` is tried once at the next cycle and
   kept only with metadata; a broken answer or no answer before the first
-  success tries the other one at the next cycle. "modern" and "old" force
-  one. The choice is not persisted (detected again after a restart).
+  success tries the other one at the next cycle. A failed `??` try (a modern
+  boiler may answer 404/401/403 there) is never a refused password: back to
+  `?`, settled when `?` already answered, read again at the normal interval
+  (review I4). "modern" and "old" force one. The choice is not persisted
+  (detected again after a restart).
 - **External ids**: `ext:<selector>:oekofen:<component key>` (`system`,
   `pe1`…). The boiler sends no serial number; one integration reads one
   controller, so the component key is unique and survives an IP change.
@@ -164,10 +184,18 @@ is the safe order.
   indices, else the boiler's own `format` label, else "Mode n".
 - **Alarms**: `system/alarm` = `L_errors` > 0, a listed message, or a boiler
   in fault (state 11, reference `decode_state`); `alarm-count` = `L_errors`;
-  `last-message` = the newest `error_N` (by its time). Scene events on a new
-  message key (time, code, text), a boiler newly in fault, or a higher error
-  count without a new message; never on the first read nor after a gap of
-  more than two intervals; 5 per read at most.
+  `last-message` = the newest `error_N` (by its time; the messages are sorted
+  by time then key number before the cut to 10). Scene events as the
+  reference's MessageLog (diagnosis.py, review I1): the message keys seen
+  (time|code when both are known, else time|code|text) and the boilers in
+  fault are kept in `/data` (200 keys at most, per boiler); a key never seen
+  fires whatever the gap since the previous read; a message that comes back
+  never fires again; a boiler fires when it enters a fault (an unknown state
+  keeps the known one); the very first read without memory only learns. The
+  error count fires only between two consecutive successful reads at most
+  two intervals (plus the read timeout) apart, without a new message, and
+  when the rise is not explained by messages listed again. 5 per read at
+  most.
 - **Logs**: never the password, the URL nor the address; `errorReason` never
   prints an unknown error's message.
 - **Template demo files removed** (devices, scenes, widgets, weather and

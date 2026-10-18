@@ -32,10 +32,13 @@ when the boiler gives its nominal power (often with the `json.properties`
 file). Solar energy is **not** sent to the Gladys energy dashboard (it would
 count it as electricity).
 
-Scene trigger **ÖkoFEN boiler alarm**: when a read shows a new message of the
-boiler, a boiler newly in fault, or more errors than the previous read.
-Variables: `message` and `code` (empty when unknown). Never at the first read
-after a start.
+Scene trigger **ÖkoFEN boiler alarm**: when a read shows a message of the
+boiler never seen before, a boiler newly in fault, or more errors than the
+previous read. Variables: `message` and `code` (empty when unknown). The
+messages already seen are kept (200 at most, in `/data`): a message that
+comes back does not fire again, and a slow or failed read never makes a new
+message go unnoticed. Never at the very first read (it learns the messages
+present).
 
 The badge of each device shows "local", or "unreachable" when the boiler
 does not answer or refuses the password (with an orange dot when that
@@ -69,9 +72,10 @@ dashboard, voice assistant) is refused and nothing is sent.
 - The password is **kept by Gladys in its database, never shown again, and
   sent only to the boiler**, in the URL of each read: that is the format of
   the device. That URL never appears in the logs nor in the status messages.
-- The `/data` volume of the integration only keeps a pause asked by the
-  boiler and a stop on a refused password, with a hash of the address and the
-  port. Never the password, nor a hash of it.
+- The `/data` volume of the integration only keeps the current pause (429, or
+  the wait after errors), a stop on a refused password and the alarm messages
+  already seen, with a hash of the address and the port. Never the password,
+  nor a hash of it.
 - Everything stays on your local network, over HTTP (the boiler has no HTTPS):
   anyone listening on that network can read the password, as with the app.
 
@@ -79,8 +83,10 @@ dashboard, voice assistant) is refused and nothing is sent.
 
 The boiler answers slowly and refuses reads too close together: it is read
 **every 60 seconds** by default (60 to 3600), one request at a time, never two
-less than 3 seconds apart, the **Test the connection** button and Discovery
-included (30 seconds at least between two reads asked by hand).
+less than 3 seconds apart. The **Test the connection** button and Discovery
+only read when the interval (30 seconds at least) has passed since the last
+attempt, successful or not, and no pause holds; otherwise the button shows
+the status and the time left.
 
 The firmware is detected by itself (`all?`, then `all??` for some old
 models); the **Firmware** field forces one or the other. UTF-8, Latin-1
@@ -90,11 +96,12 @@ models); the **Firmware** field forces one or the other. UTF-8, Latin-1
 
 - **Password refused** (or JSON interface off): the reads stop; a new try
   after 10 min, 1 h, then every 6 h, or at once when you change the address
-  or the password or click **Test the connection**. The stop is kept across
-  restarts.
+  or the password. **Test the connection** also tries again, once the
+  interval has passed since the last attempt. Only a successful read lifts
+  the stop, and it is kept across restarts.
 - **The boiler asks to wait** (401 "Wait at least 2500ms") or does not
   answer: a new try after 1, 2, 5, 10 then every 15 minutes, never faster
-  than the interval.
+  than the interval. That wait is kept across restarts.
 - **HTTP 429**: a pause of at least 1 minute (Retry-After when given, 6 h at
   most), for every path, kept across restarts.
 - An answer too large (over 256 KB) or that is not JSON is refused.

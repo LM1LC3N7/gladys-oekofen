@@ -179,8 +179,8 @@
         "fr": "Tester la connexion"
       },
       "description": {
-        "en": "Reads the boiler once (at most every 30 seconds). Also retries at once after a refused password.",
-        "fr": "Lit une fois la chaudière (au plus toutes les 30 secondes). Réessaie aussi aussitôt après un mot de passe refusé."
+        "en": "Reads the boiler once, if the refresh interval (30 s at least) has passed since the last read and no pause holds; otherwise shows the status and the time left. After a refused password, tries again at once once the interval has passed.",
+        "fr": "Lit une fois la chaudière, si l'intervalle de rafraîchissement (30 s au moins) est écoulé depuis la dernière lecture et qu'aucune pause n'est en cours ; sinon affiche l'état et le temps restant. Après un mot de passe refusé, réessaie aussitôt une fois l'intervalle écoulé."
       },
       "timeout_seconds": 60
     }
@@ -193,8 +193,8 @@
         "fr": "Alarme de la chaudière ÖkoFEN"
       },
       "description": {
-        "en": "When a read shows a new message of the boiler, a boiler newly in fault, or more errors than the previous read (every minute; never at the first read).",
-        "fr": "Quand une lecture montre un nouveau message de la chaudière, une chaudière nouvellement en défaut, ou plus d'erreurs que la lecture précédente (chaque minute ; jamais à la première lecture)."
+        "en": "When a read shows a message of the boiler never seen before, a boiler newly in fault, or more errors than the previous read (every minute; never at the very first read).",
+        "fr": "Quand une lecture montre un message de la chaudière jamais vu, une chaudière nouvellement en défaut, ou plus d'erreurs que la lecture précédente (chaque minute ; jamais à la toute première lecture)."
       },
       "variables": [
         {

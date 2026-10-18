@@ -119,8 +119,13 @@ export const T = {
   ),
   refused: (wait) =>
     both(
-      `The boiler refused the password (or the JSON interface is off). New try in ${wait.en}, or at once when you save the configuration or click "Test the connection".`,
-      `La chaudière a refusé le mot de passe (ou l'interface JSON est désactivée). Nouvel essai dans ${wait.fr}, ou aussitôt quand vous enregistrez la configuration ou cliquez sur « Tester la connexion ».`,
+      `The boiler refused the password (or the JSON interface is off). New try in ${wait.en}, or at once when you change the address or the password. "Test the connection" also tries again once the refresh interval has passed since the last read.`,
+      `La chaudière a refusé le mot de passe (ou l'interface JSON est désactivée). Nouvel essai dans ${wait.fr}, ou aussitôt quand vous changez l'adresse ou le mot de passe. « Tester la connexion » réessaie aussi une fois l'intervalle de rafraîchissement écoulé depuis la dernière lecture.`,
+    ),
+  waiting: (wait) =>
+    both(
+      `Waiting before the next read of the boiler (${wait.en}).`,
+      `Attente avant la prochaine lecture de la chaudière (${wait.fr}).`,
     ),
   rateLimited: (wait) =>
     both(
@@ -133,10 +138,11 @@ export const T = {
       `Chaudière non lue : ${reason.fr}. Nouvel essai dans ${wait.fr}.`,
     ),
   test: {
-    cooldown: both(
-      'The boiler was read less than 30 seconds ago (it refuses reads too close together).',
-      'La chaudière a été lue il y a moins de 30 secondes (elle refuse les lectures trop rapprochées).',
-    ),
+    wait: (wait) =>
+      both(
+        `The boiler refuses reads too close together: next read possible in ${wait.en}.`,
+        `La chaudière refuse les lectures trop rapprochées : prochaine lecture possible dans ${wait.fr}.`,
+      ),
   },
   busy: both(
     'A read is in progress, try again in a moment.',

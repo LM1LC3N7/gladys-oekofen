@@ -34,4 +34,19 @@ the notes of the version's GitHub Release.
   are sent again at each reconnection to Gladys.
 - Device and feature names in French or English.
 
+### Fixed
+
+- A new boiler message is no longer missed after a failed or slow read, and
+  a message that comes back no longer fires again: the messages seen are kept
+  in `/data` (200 at most).
+- The test button and Discovery no longer read faster than the refresh
+  interval (30 s at least) after the last attempt, nor during a backoff; the
+  button retries a refused password at once only once that interval has
+  passed, and only a successful read lifts the stop.
+- The backoff after errors and "Wait at least" is kept in `/data`: a restart
+  no longer reads at once.
+- A refused `??` probe (old firmware detection) no longer stops the reads as
+  a refused password: the integration goes back to `?`.
+- The ten messages kept are the newest (sorted before the cut).
+
 [Unreleased]: https://github.com/LM1LC3N7/gladys-oekofen/commits/main

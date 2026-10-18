@@ -18,11 +18,17 @@ export function fakeBoiler({ password = PASSWORD, document = modern(), encode = 
     /** suffix -> answer, for the URL variant tests ('?' or '??'). */
     bySuffix: {},
     requests: [],
+    /** Milliseconds before each answer. */
+    delay: 0,
     transport: async (url, { timeout } = {}) => {
       const parsed = new URL(url);
       const [, given, all] = parsed.pathname.split('/');
       const suffix = url.endsWith('??') ? '??' : url.endsWith('?') ? '?' : '';
       server.requests.push({ at: Date.now(), suffix, timeout, url });
+      if (server.delay > 0) {
+        // A slow boiler (the timers are mocked: the test moves the clock).
+        await new Promise((resolve) => setTimeout(resolve, server.delay));
+      }
       const next = server.queue.shift();
       if (next instanceof Error) {
         throw next;

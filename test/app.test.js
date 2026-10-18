@@ -183,15 +183,126 @@ test('a refused password stops the reads, spaced new tries, kept across a restar
   await again.configUpdated({ ...CONFIG, password: 'new-one' });
   assert.equal(server.requests.length, 3);
   assert.equal(again.blocked, true);
-  // The test button retries at once once the boiler takes the password (30 s apart).
+  // The test button retries at once, but only once the interval has passed
+  // since the last attempt.
   server.password = 'new-one';
   await advance(30 * SECOND);
-  const reply = again.testConnection();
-  await advance(5 * SECOND);
-  assert.match((await reply).en, /Connected/);
+  const early = await again.testConnection();
+  assert.match(early.en, /next read possible in 30 s/);
+  assert.equal(server.requests.length, 3);
+  // A retry that fails without an answer keeps the stop (in /data too).
+  await advance(30 * SECOND);
+  server.failNetwork();
+  await again.testConnection();
   assert.equal(server.requests.length, 4);
+  assert.equal(again.blocked, true);
+  assert.ok(store.data.block, 'the stop is still in /data');
+  // During the backoff that follows, the button does not read.
+  const during = await again.testConnection();
+  assert.match(during.fr, /prochaine lecture possible dans/);
+  assert.equal(server.requests.length, 4);
+  // A successful read lifts the stop.
+  await advance(MINUTE + 5 * SECOND);
+  const reply = await again.testConnection();
+  assert.match(reply.en, /Connected/);
+  assert.equal(server.requests.length, 5);
   assert.equal(again.blocked, false);
   assert.equal(store.data.block, null);
+});
+
+test('the backoff ("Wait at least", failures) is kept across a restart: no read at once', async (t) => {
+  const server = fakeBoiler();
+  const store = memoryStore();
+  const { app, advance } = await setup(t, { server, store });
+  server.failNetwork();
+  server.failNetwork();
+  await advance(MINUTE);
+  await advance(MINUTE);
+  assert.equal(server.requests.length, 3);
+  assert.equal(store.data.pause.kind, 'backoff');
+  assert.equal(store.data.pause.failures, 2);
+  const until = store.data.pause.until;
+  // The second failure (at 2 min) waits 2 min.
+  assert.equal(until, NOW + 2 * MINUTE + 2 * MINUTE);
+  app.stop();
+  const again = new OekofenApp({
+    gladys: createFakeGladys({ config: CONFIG }),
+    transport: server.transport,
+    now: () => Date.now(),
+    store,
+    logger: recorder([]),
+  });
+  t.after(() => again.stop());
+  await again.start(CONFIG);
+  assert.equal(server.requests.length, 3, 'no read at the restart');
+  assert.match(again.lastMessage.en, /Waiting before the next read/);
+  await advance(until - Date.now() - SECOND);
+  assert.equal(server.requests.length, 3);
+  await advance(5 * SECOND);
+  assert.equal(server.requests.length, 4, 'read when the pause ends');
+  assert.equal(store.data.pause, null);
+});
+
+test('alarms: a slow read after a failed one still fires; a message that comes back does not', async (t) => {
+  const A = '01-10-2026 07:00:00|Old message [1]';
+  const B = '18-10-2026 09:59:00|PE 1 Pellets Warnung [5054]';
+  const C = '18-10-2026 10:30:00|PE 1 Aschebox voll [5050]';
+  const server = fakeBoiler({ document: modern({ errors: 1, messages: { error_1: A } }) });
+  const store = memoryStore();
+  const { gladys, app, advance } = await setup(t, { server, store });
+  assert.deepEqual(store.data.alarms.seen, ['2026-10-01 07:00:00|1']);
+  // One failed read, then a slow answer (8 s) with a new message: more than
+  // two intervals after the last success, it still fires.
+  server.failNetwork();
+  await advance(MINUTE);
+  server.delay = 8 * SECOND;
+  server.document = modern({ errors: 2, messages: { error_1: A, error_2: B } });
+  await advance(MINUTE + 10 * SECOND);
+  server.delay = 0;
+  assert.equal(server.requests.length, 3);
+  assert.deepEqual(
+    gladys.fake.sceneEvents.map((e) => e.data.code),
+    ['5054'],
+  );
+  // B goes away, then comes back: never fired again.
+  server.document = modern({ errors: 1, messages: { error_1: A } });
+  await advance(MINUTE);
+  server.document = modern({ errors: 2, messages: { error_1: A, error_2: B } });
+  await advance(MINUTE);
+  assert.equal(gladys.fake.sceneEvents.length, 1);
+  // A restart remembers what was seen: only the new message fires.
+  app.stop();
+  const fresh = createFakeGladys({ config: CONFIG });
+  const again = new OekofenApp({
+    gladys: fresh,
+    transport: server.transport,
+    now: () => Date.now(),
+    store,
+    logger: recorder([]),
+  });
+  t.after(() => again.stop());
+  server.document = modern({ errors: 3, messages: { error_1: A, error_2: B, error_3: C } });
+  await advance(5 * SECOND);
+  await again.start(CONFIG);
+  await advance(2 * SECOND);
+  assert.deepEqual(
+    fresh.fake.sceneEvents.map((e) => e.data.code),
+    ['5050'],
+  );
+});
+
+test('auto: a refused "??" probe is no refused password; "?" is kept', async (t) => {
+  const server = fakeBoiler({ document: BARE });
+  server.bySuffix['??'] = { status: 404, body: Buffer.from('Not found') };
+  const { gladys, app, advance, store } = await setup(t, { server });
+  await advance(3 * MINUTE);
+  assert.deepEqual(
+    server.requests.map((r) => r.suffix),
+    ['?', '??', '?', '?'],
+  );
+  assert.equal(app.blocked, false);
+  assert.equal(store.data.block, null);
+  assert.equal(gladys.fake.connectionStatus.connected, true);
 });
 
 test('the boiler asks to wait or does not answer: never faster than the interval', async (t) => {
@@ -341,14 +452,21 @@ test('a Latin-1 answer gives the same values and accents', async (t) => {
   assert.equal(last(gladys, 'pe1', 'boiler-temperature'), 63.3);
 });
 
-test('the test button: one read at most every 30 s, the last status otherwise', async (t) => {
-  const { gladys, server, advance } = await setup(t);
+test('the test button and Discovery never read closer than the interval to the last attempt', async (t) => {
+  const server = fakeBoiler();
+  const { gladys, advance } = await setup(t, { server, config: { ...CONFIG, poll_interval: 300 } });
   const first = await gladys.fake.action(ACTIONS.TEST_CONNECTION);
-  assert.match(first.data.message.en, /less than 30 seconds/);
-  assert.equal(server.requests.length, 1);
-  await advance(40 * SECOND);
-  const second = await gladys.fake.action(ACTIONS.TEST_CONNECTION);
-  assert.match(second.data.message.fr, /Connecté/);
+  assert.match(first.data.message.en, /next read possible in 5 min\. Connected/);
+  await advance(31 * SECOND);
+  await gladys.fake.scanRequest();
+  await gladys.fake.action(ACTIONS.TEST_CONNECTION);
+  assert.equal(server.requests.length, 1, 'neither the button nor Discovery read');
+  // A failed attempt counts too, and its backoff holds for the button.
+  server.failNetwork();
+  await advance(270 * SECOND);
+  assert.equal(server.requests.length, 2);
+  const during = await gladys.fake.action(ACTIONS.TEST_CONNECTION);
+  assert.match(during.data.message.en, /next read possible in 5 min\. Boiler not read/);
   assert.equal(server.requests.length, 2);
 });
 

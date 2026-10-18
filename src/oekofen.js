@@ -402,9 +402,13 @@ export function parseMessage(raw) {
   return { time, text: text ?? '', code };
 }
 
+/** Message entries looked at, at most (`error_1` … `error_999` are possible). */
+const MAX_MESSAGE_KEYS = 100;
+
 /**
  * The messages of the `error` section, newest first (by their time, then by
- * their key), at most LIMITS.messages; `undefined` when the answer has no
+ * the number of their key, `error_2` before `error_10`), at most
+ * LIMITS.messages, cut only once sorted; `undefined` when the answer has no
  * `error` section.
  */
 export function messagesOf(root) {
@@ -412,25 +416,33 @@ export function messagesOf(root) {
   if (!isRecord(section)) {
     return undefined;
   }
-  const messages = [];
-  for (const key of Object.keys(section).sort()) {
-    if (!/^error_\d{1,3}$/.test(key)) {
-      continue;
+  const entries = [];
+  for (const key of Object.keys(section)) {
+    const match = /^error_(\d{1,3})$/.exec(key);
+    if (match) {
+      entries.push({ key, index: Number(match[1]) });
     }
+  }
+  entries.sort((a, b) => a.index - b.index);
+  const messages = [];
+  for (const { key, index } of entries.slice(0, MAX_MESSAGE_KEYS)) {
     const message = parseMessage(section[key]);
     if (message) {
-      messages.push(message);
-    }
-    if (messages.length >= LIMITS.messages) {
-      break;
+      messages.push({ message, index });
     }
   }
   return messages
-    .map((message, order) => ({ message, order }))
-    .sort((a, b) => (b.message.time ?? '').localeCompare(a.message.time ?? '') || a.order - b.order)
+    .sort((a, b) => (b.message.time ?? '').localeCompare(a.message.time ?? '') || a.index - b.index)
+    .slice(0, LIMITS.messages)
     .map(({ message }) => message);
 }
 
-/** A stable key of a message, to tell a new one. */
+/**
+ * A stable key of a message, to tell a new one: its time and code when it
+ * has both (the text may change with the display language), its text
+ * otherwise.
+ */
 export const messageKey = (message) =>
-  `${message.time ?? ''}|${message.code ?? ''}|${message.text}`;
+  message.time && message.code
+    ? `${message.time}|${message.code}`
+    : `${message.time ?? ''}|${message.code ?? ''}|${message.text}`;

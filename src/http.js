@@ -2,6 +2,9 @@
 // The only network access: one HTTP GET to the boiler's JSON interface, and
 // the errors it ends with. The body read is bounded; the messages never hold
 // the URL (it carries the password), the address nor the password.
+//
+// Ported in part from dominikamann/oekofen-pellematic-compact 4.4.0
+// (Apache-2.0), changed: see THIRD_PARTY_NOTICES.md.
 // -----------------------------------------------------------------------------
 
 import http from 'node:http';

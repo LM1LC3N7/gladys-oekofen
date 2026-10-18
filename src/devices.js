@@ -16,6 +16,10 @@
 // lists for the category (DEVICE_FEATURE_UNITS_BY_CATEGORY): no kg, kW, kWh
 // nor % outside their categories, so those values have no unit and say it in
 // their name.
+//
+// Ported in part from dominikamann/oekofen-pellematic-compact 4.4.0
+// (Apache-2.0), changed (the field names read, the state of a boiler in
+// fault): see THIRD_PARTY_NOTICES.md.
 // -----------------------------------------------------------------------------
 
 import {

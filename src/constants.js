@@ -74,6 +74,8 @@ export const LIMITS = {
   components: 40,
   /** Boiler messages read (error_1 to error_5 on the boilers seen). */
   messages: 10,
+  /** Alarm keys remembered in /data (the reference's MessageLog keeps 200). */
+  seenAlarms: 200,
   /** Scene events fired by one read at most. */
   eventsPerRead: 5,
   /** A text state. */

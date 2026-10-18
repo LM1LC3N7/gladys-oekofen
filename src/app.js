@@ -10,7 +10,9 @@
 // client.js), never faster than the interval after a failure; a refused
 // password stops the reads (new try after 10 min, 1 h, then every 6 h, or at
 // once on new settings or the test button); a 429 pauses every path for 60 s
-// to 6 h. The pause and the stop are kept in /data and bounded. A
+// to 6 h; other errors back off. The pause (429 or backoff), the stop and
+// the alarms already seen are kept in /data and bounded. The test button and
+// Discovery read only max(30 s, interval) after the last attempt. A
 // reconnection to Gladys resends what Gladys keeps in memory only (status,
 // Discovery list, badges) and keeps the pause, the stop and the client.
 // index.js only wires the SDK handlers to this class.
@@ -32,7 +34,7 @@ import {
   statesOf,
 } from './devices.js';
 import { errorReason } from './http.js';
-import { MESSAGES, T, age, both, reasonOf, word } from './i18n.js';
+import { MESSAGES, T, age, both, join, reasonOf, word } from './i18n.js';
 import { componentsOf, field, messageKey, messagesOf, readNumber } from './oekofen.js';
 import { StatePublisher } from './publisher.js';
 import { fileStore, normalizeMemory } from './store.js';
@@ -82,13 +84,18 @@ export class OekofenApp {
     this.offline = false;
     this.failures = 0;
     this.pausedUntil = 0;
-    /** 'rate' (429): every path waits; 'backoff': the polling only. */
+    /**
+     * 'rate' (429) or 'backoff' (failures, "Wait at least"): no read before
+     * `pausedUntil`, by any path; both kept in /data.
+     */
     this.pauseKind = undefined;
-    /** The alarms of the previous read: `{ at, keys, count }`. */
-    this.alarms = undefined;
+    /** The alarms already seen: `{ seen: [message keys], faulted: Set<pe id> }` (kept in /data). */
+    this.alarmSeen = undefined;
+    this.alarmsChanged = false;
+    /** The error count of the previous successful read: `{ at, count }`. */
+    this.lastCount = undefined;
     this.resetVariant();
     this.lastStatus = undefined;
-    this.lastTestAt = -Infinity;
     this.started = false;
   }
 
@@ -102,21 +109,25 @@ export class OekofenApp {
     this.reset();
     this.memory = normalizeMemory(await this.store.load().catch(() => null), this.now());
     if (this.memory.key !== this.config.key) {
-      // Another boiler: the pause and the stop of the previous one are not its own.
-      this.memory = { key: this.config.key, pause: null, block: null };
+      // Another boiler: the pause, the stop and the alarms of the previous one are not its own.
+      this.memory = { key: this.config.key, pause: null, block: null, alarms: null };
     }
     if (fresh) {
       this.memory.block = null;
     }
-    const { pause, block } = this.memory;
+    const { pause, block, alarms } = this.memory;
     if (pause && pause.until > this.now()) {
       this.pausedUntil = pause.until;
-      this.pauseKind = 'rate';
+      this.pauseKind = pause.kind;
+      this.failures = pause.failures;
     }
     if (block) {
       this.blocked = true;
       this.retries = block.retries;
       this.retryAt = block.retryAt;
+    }
+    if (alarms) {
+      this.alarmSeen = { seen: [...alarms.seen], faulted: new Set(alarms.faulted) };
     }
     this.client.configure(this.config);
     await this.saveMemory();
@@ -131,7 +142,16 @@ export class OekofenApp {
       this.scheduleNext();
       return;
     }
-    await this.setStatus(false, this.pauseMessage() ?? T.connecting);
+    if (this.now() < this.pausedUntil) {
+      // A pause kept across the restart: the first read waits for its end.
+      await this.setStatus(
+        false,
+        this.pauseMessage() ?? T.waiting(age(this.pausedUntil - this.now())),
+      );
+      this.scheduleAt(this.pausedUntil);
+      return;
+    }
+    await this.setStatus(false, T.connecting);
     await this.tick();
   }
 
@@ -174,7 +194,9 @@ export class OekofenApp {
     this.readAt = undefined;
     this.published = undefined;
     this.badges.clear();
-    this.alarms = undefined;
+    this.alarmSeen = undefined;
+    this.alarmsChanged = false;
+    this.lastCount = undefined;
     this.blocked = false;
     this.retries = 0;
     this.retryAt = 0;
@@ -266,11 +288,18 @@ export class OekofenApp {
       .catch((err) => this.logger.warn(`Saving the state to /data failed: ${err.message}`));
   }
 
-  /** The pause and the stop, with the boiler they belong to. */
+  /** The pause, the stop and the alarms seen, with the boiler they belong to. */
   async persist() {
     this.memory.key = this.config.key;
-    this.memory.pause = this.ratePaused ? { until: this.pausedUntil } : null;
+    this.memory.pause =
+      this.pauseKind && this.now() < this.pausedUntil
+        ? { kind: this.pauseKind, until: this.pausedUntil, failures: this.failures }
+        : null;
     this.memory.block = this.blocked ? { retries: this.retries, retryAt: this.retryAt } : null;
+    this.memory.alarms = this.alarmSeen
+      ? { seen: [...this.alarmSeen.seen], faulted: [...this.alarmSeen.faulted] }
+      : null;
+    this.alarmsChanged = false;
     await this.saveMemory();
   }
 
@@ -299,6 +328,12 @@ export class OekofenApp {
     } else {
       delay = interval;
     }
+    this.scheduleAt(now + delay);
+  }
+
+  /** The next read at `at` (at once when it is past). */
+  scheduleAt(at) {
+    this.clearTimer();
     const generation = this.generation;
     this.timer = this.timers.setTimeout(
       () => {
@@ -307,33 +342,37 @@ export class OekofenApp {
           this.tick().catch((err) => this.logger.error(`ÖkoFEN refresh failed: ${err.message}`));
         }
       },
-      Math.max(0, delay),
+      Math.max(0, at - this.now()),
     );
   }
 
-  /** One run at a time: a tick during a run joins it. */
-  tick() {
+  /**
+   * One run at a time: a tick during a run joins it. `force`: the test
+   * button retrying a refused password before its scheduled new try.
+   */
+  tick({ force = false } = {}) {
     if (!this.running) {
-      this.running = this.run().finally(() => {
+      this.running = this.run({ force }).finally(() => {
         this.running = undefined;
       });
     }
     return this.running;
   }
 
-  async run() {
+  async run({ force = false } = {}) {
     const generation = this.generation;
     if (!this.configured) {
       return;
     }
-    if (this.blocked && this.now() >= this.retryAt) {
-      // The spaced new try: one read.
-      this.logger.info('ÖkoFEN: trying again after a refused password');
-      this.blocked = false;
-    }
-    if (this.blocked || this.now() < this.pausedUntil) {
+    // A stop is only lifted by a successful read: while it is tried again,
+    // `blocked` stays set (and in /data).
+    const retryDue = this.blocked && (force || this.now() >= this.retryAt);
+    if ((this.blocked && !retryDue) || this.now() < this.pausedUntil) {
       this.scheduleNext();
       return;
+    }
+    if (retryDue) {
+      this.logger.info('ÖkoFEN: trying again after a refused password');
     }
     const suffix = this.suffix;
     try {
@@ -345,7 +384,8 @@ export class OekofenApp {
       const count = this.ingest(root);
       this.readAt = this.now();
       await this.publishDevices();
-      const hadStop = this.retries > 0 || this.pauseKind !== undefined;
+      const hadStop = this.blocked || this.retries > 0 || this.pauseKind !== undefined;
+      this.blocked = false;
       this.failures = 0;
       this.retries = 0;
       this.retryAt = 0;
@@ -354,7 +394,7 @@ export class OekofenApp {
         this.pauseKind = undefined;
         this.pausedUntil = 0;
       }
-      if (hadStop || this.memory.block || this.memory.pause) {
+      if (hadStop || this.alarmsChanged || this.memory.block || this.memory.pause) {
         await this.persist();
       }
       if (count === 0) {
@@ -366,12 +406,29 @@ export class OekofenApp {
       if (generation !== this.generation) {
         return;
       }
-      if (!this.variantSettled && TRY_OTHER_VARIANT.has(err?.kind)) {
-        // "auto": some firmware only answers on the other variant.
-        this.suffix =
-          suffix === INTERFACE.suffixes.modern ? INTERFACE.suffixes.old : INTERFACE.suffixes.modern;
+      this.lastCount = undefined;
+      if (
+        !this.variantSettled &&
+        suffix === INTERFACE.suffixes.old &&
+        err?.kind !== 'rate_limited' &&
+        (this.variantProbed || err?.kind === 'refused')
+      ) {
+        // "auto": `??` was only a try. Its failure (a modern boiler may
+        // refuse it) is never a refused password: back to `?`, settled when
+        // `?` already answered, read again at the normal interval.
+        this.suffix = INTERFACE.suffixes.modern;
+        this.variantSettled = this.variantProbed;
+        this.logger.info(`ÖkoFEN: the old URL variant failed (${errorReason(err)}), back to "?"`);
+      } else {
+        if (!this.variantSettled && TRY_OTHER_VARIANT.has(err?.kind)) {
+          // "auto": some firmware only answers on the other variant.
+          this.suffix =
+            suffix === INTERFACE.suffixes.modern
+              ? INTERFACE.suffixes.old
+              : INTERFACE.suffixes.modern;
+        }
+        await this.failed(err);
       }
-      await this.failed(err);
     }
     await this.publishBadges();
     await this.flush();
@@ -496,47 +553,68 @@ export class OekofenApp {
   }
 
   /**
-   * The "boiler alarm" scene events: a message not in the previous read, a
-   * boiler newly in fault, or more errors counted without a new message.
-   * Never on the first read, nor after a gap of more than two intervals (a
-   * pause, an outage: no "change" can be told then).
+   * The "boiler alarm" scene events, as the reference's MessageLog
+   * (diagnosis.py): the keys of the messages already seen and the boilers in
+   * fault are kept in /data (200 keys at most). A message never seen fires,
+   * whatever the time since the previous read (a failed or slow read never
+   * hides it), and a message that comes back never fires again; a boiler
+   * fires when it enters a fault. The very first read without memory only
+   * learns. A higher error count without a new message (and not explained by
+   * messages listed again) fires only between two consecutive successful
+   * reads at most two intervals apart.
    */
   alarmEvents({ messages, faults, count }) {
     const now = this.now();
-    const keys = new Set(messages.map(messageKey));
+    const language = this.config.language;
+    const previousCount = this.lastCount;
+    this.lastCount = { at: now, count, listed: messages.length };
+    const keys = messages.map(messageKey);
+    const faulted = new Set();
     for (const { component, fault } of faults) {
-      if (fault) {
-        keys.add(`fault:${component.id}`);
+      // An unknown state keeps what was known.
+      if (fault === true || (fault === undefined && this.alarmSeen?.faulted.has(component.id))) {
+        faulted.add(component.id);
       }
     }
-    const previous = this.alarms;
-    this.alarms = { at: now, keys, count };
-    if (
-      !previous ||
-      now - previous.at > 2 * this.config.pollInterval * 1000 + TIMINGS.minRequestGap
-    ) {
+    if (!this.alarmSeen) {
+      this.alarmSeen = { seen: [...new Set(keys)].slice(-LIMITS.seenAlarms), faulted };
+      this.alarmsChanged = true;
       return;
     }
-    const language = this.config.language;
+    const { seen } = this.alarmSeen;
     const events = [];
-    for (const message of messages) {
-      if (!previous.keys.has(messageKey(message))) {
+    messages.forEach((message, i) => {
+      if (!seen.includes(keys[i])) {
+        seen.push(keys[i]);
         events.push({ message: messageText(message, language), code: message.code ?? '' });
       }
+    });
+    if (seen.length > LIMITS.seenAlarms) {
+      seen.splice(0, seen.length - LIMITS.seenAlarms);
     }
-    for (const { component, fault } of faults) {
-      if (fault && !previous.keys.has(`fault:${component.id}`)) {
+    for (const { component } of faults) {
+      if (faulted.has(component.id) && !this.alarmSeen.faulted.has(component.id)) {
         events.push({
           message: word(MESSAGES.fault(deviceName(component, language)), language),
           code: '',
         });
       }
     }
+    const faultsChanged =
+      faulted.size !== this.alarmSeen.faulted.size ||
+      [...faulted].some((id) => !this.alarmSeen.faulted.has(id));
+    this.alarmSeen.faulted = faulted;
+    if (events.length > 0 || faultsChanged) {
+      this.alarmsChanged = true;
+    }
+    const maxGap = 2 * this.config.pollInterval * 1000 + TIMINGS.requestTimeout;
     if (
       events.length === 0 &&
       count !== undefined &&
-      previous.count !== undefined &&
-      count > previous.count
+      previousCount?.count !== undefined &&
+      now - previousCount.at <= maxGap &&
+      // Not explained by messages listed again (a known message coming back).
+      count - previousCount.count > messages.length - previousCount.listed
     ) {
       events.push({ message: word(MESSAGES.countRose(count), language), code: '' });
     }
@@ -679,13 +757,22 @@ export class OekofenApp {
     }
   }
 
-  /** The Discovery tab asks for a scan: a fresh read if the last one is old enough. */
+  /**
+   * Time left before a read asked by hand (button, Discovery): at least
+   * max(30 s, interval) after the last attempt, failed ones included.
+   */
+  manualWait() {
+    const gap = Math.max(TIMINGS.testCooldown, this.config.pollInterval * 1000);
+    return Math.max(0, this.client.lastRequestAt + gap - this.now());
+  }
+
+  /** The Discovery tab asks for a scan: a fresh read only if the last attempt is old enough. */
   async scan() {
     if (
       this.configured &&
       !this.blocked &&
       this.now() >= this.pausedUntil &&
-      (this.readAt === undefined || this.now() - this.readAt >= TIMINGS.testCooldown)
+      this.manualWait() === 0
     ) {
       await this.tick();
       return;
@@ -713,28 +800,24 @@ export class OekofenApp {
     if (paused) {
       return paused;
     }
-    // At most one read per 30 s from this button (the boiler refuses close reads).
-    const last = Math.max(this.lastTestAt, this.readAt ?? -Infinity);
-    if (this.now() - last < TIMINGS.testCooldown) {
-      return this.lastMessage
-        ? {
-            en: `${T.test.cooldown.en} ${this.lastMessage.en}`,
-            fr: `${T.test.cooldown.fr} ${this.lastMessage.fr}`,
-          }
-        : T.test.cooldown;
-    }
     if (this.running) {
       return T.busy;
     }
-    this.lastTestAt = this.now();
-    // The button is how a refused password is retried at once.
-    this.blocked = false;
-    this.retryAt = 0;
-    if (this.pauseKind === 'backoff') {
-      this.pausedUntil = 0;
-      this.pauseKind = undefined;
+    const withLast = (first) => (this.lastMessage ? join(first, this.lastMessage) : first);
+    // During a backoff (failures, "Wait at least"), the button never reads.
+    if (this.pauseKind === 'backoff' && this.now() < this.pausedUntil) {
+      return withLast(T.test.wait(age(this.pausedUntil - this.now())));
     }
-    await this.tick();
+    // Never closer than max(30 s, interval) to the last attempt (the boiler
+    // refuses close reads); after a refused password this is the only wait
+    // before an immediate retry.
+    const wait = this.manualWait();
+    if (wait > 0) {
+      return withLast(T.test.wait(age(wait)));
+    }
+    // A refused password is retried at once; the stop is lifted only by a
+    // successful read (run).
+    await this.tick({ force: this.blocked });
     return this.lastMessage ?? T.noConfig;
   }
 }
